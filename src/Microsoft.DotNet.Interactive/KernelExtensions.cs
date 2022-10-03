@@ -114,19 +114,6 @@ namespace Microsoft.DotNet.Interactive
             return (false, default);
         }
 
-        [DebuggerStepThrough]
-        public static Task<KernelCommandResult> SendAsync(
-            this Kernel kernel,
-            KernelCommand command)
-        {
-            if (kernel is null)
-            {
-                throw new ArgumentNullException(nameof(kernel));
-            }
-
-            return kernel.SendAsync(command, CancellationToken.None);
-        }
-
         public static Task<KernelCommandResult> SubmitCodeAsync(
             this Kernel kernel,
             string code)
@@ -162,6 +149,50 @@ namespace Microsoft.DotNet.Interactive
             return kernel;
 
             KernelInfoCollection CreateKernelInfos(CompositeKernel kernel)
+            {
+                KernelInfoCollection kernelInfos = new();
+
+                var kernelChoosers = kernel.Directives.OfType<ChooseKernelDirective>();
+
+                foreach (var kernelChooser in kernelChoosers)
+                {
+                    List<string> kernelAliases = new();
+
+                    foreach (var alias in kernelChooser.Aliases.Where(a => a != kernelChooser.Name))
+                    {
+                        kernelAliases.Add(alias[2..]);
+                    }
+
+                    kernelInfos.Add(new Documents.KernelInfo(kernelChooser.Name[2..], kernelAliases));
+                }
+
+                return kernelInfos;
+            }
+        }
+
+        public static T UseImportMagicCommand<T>(this T kernel)
+            where T : Kernel
+        {
+            var command = new Command("#!import", "Imports and runs another notebook.");
+            command.AddArgument(new Argument<FileInfo>("notebookFile").ExistingOnly());
+            command.Handler = CommandHandler.Create(
+                async (FileInfo notebookFile, KernelInvocationContext _) =>
+                {
+                    var document = await InteractiveDocument.LoadAsync(
+                                       notebookFile,
+                                       CreateKernelInfos(kernel.RootKernel as CompositeKernel));
+
+                    foreach (var element in document.Elements)
+                    {
+                        await kernel.RootKernel.SendAsync(new SubmitCode(element.Contents, element.KernelName));
+                    }
+                });
+
+            kernel.AddDirective(command);
+
+            return kernel;
+
+            static KernelInfoCollection CreateKernelInfos(CompositeKernel kernel)
             {
                 KernelInfoCollection kernelInfos = new();
 
